@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ELO Tracker Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+/*
+  ELO TRACKER OVERLAY (OBS browser source), data from the official FACEIT Data API v4
+  ---------------------------------------------------------------------------------
+  Settings: pass ?nickname=&key= in the URL (keep the key private, never put it in this file).
+  URL parameters:
+    nickname   FACEIT nickname (required unless demo=1)
+    key        FACEIT *client-side* API key from developers.faceit.com (required unless demo=1)
+    accent     hex color without #, e.g. accent=d946ef      (default d946ef)
+    layout     card | bar                                    (default card)
+    refresh    seconds between updates                       (default 60, min 20)
+    reset=1    start a new session now (today's numbers go back to 0)
+    demo=1     sample data, for positioning in OBS
+  OBS sizes: card 500 x 210, bar 980 x 64.
+*/
+:root{
+  --accent:#d946ef; --bg:rgba(12,13,17,.88); --bg2:rgba(255,255,255,.055); --line:rgba(255,255,255,.09);
+  --text:#f4f5f7; --muted:#9aa0ab; --win:#22d37a; --loss:#ff4d5e; --lvl:#ffc800;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden}
+body{font-family:Barlow,system-ui,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;padding:10px}
+.num{font-family:"Barlow Condensed",Barlow,system-ui,sans-serif;font-variant-numeric:tabular-nums;font-weight:700}
+.muted{color:var(--muted)}
+
+.card{width:480px;padding:14px 16px 12px 14px;border-radius:16px;background:var(--bg);border:1px solid var(--line);
+  box-shadow:0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent)}
+.top{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center}
+.ring{position:relative;width:66px;height:66px;flex:none}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring .track{stroke:rgba(255,255,255,.08)}
+.ring .prog{stroke:var(--lvl);transition:stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1)}
+.ring .lv{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:27px;color:var(--lvl);line-height:.9}
+.ring .lvcap{font-family:Barlow,system-ui,sans-serif;font-size:8px;font-weight:700;letter-spacing:.16em;color:var(--muted);margin-top:3px;padding-left:.16em}
+.mid{min-width:0}
+.name{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:8px;align-items:center}
+.name .flag{font-size:11px;letter-spacing:.06em;padding:1px 5px;border-radius:4px;background:var(--bg2);color:var(--text)}
+.eloRow{display:flex;align-items:baseline;gap:10px;margin-top:2px}
+.elo{font-size:42px;line-height:1}
+.elo small{font-family:Barlow,system-ui,sans-serif;font-size:13px;color:var(--muted);font-weight:600;margin-left:4px;letter-spacing:.1em}
+.delta{font-size:18px;padding:2px 8px;border-radius:7px;background:var(--bg2)}
+.up{color:var(--win)} .down{color:var(--loss)} .flat{color:var(--muted)}
+.bar{margin-top:8px;height:5px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--lvl));border-radius:5px;transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.next{margin-top:5px;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.04em}
+.next b{color:var(--text)}
+.right{display:flex;flex-direction:column;align-items:flex-end;gap:5px;padding-left:14px;border-left:1px solid var(--line);min-width:96px}
+.cap{font-size:9px;font-weight:700;letter-spacing:.16em;color:var(--muted);text-transform:uppercase}
+.wl{font-size:30px;line-height:1}
+.wl .w{color:var(--win)} .wl .l{color:var(--loss)} .wl .sep{color:var(--muted);margin:0 4px}
+.lastg{font-size:11px;font-weight:600;color:var(--muted)} .lastg b{font-family:"Barlow Condensed",Barlow,sans-serif;font-size:14px}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
+.stat{background:var(--bg2);border-radius:9px;padding:6px 9px}
+.stat .v{font-size:19px;line-height:1.05}
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px}
+.dots{display:flex;gap:4px}
+.dots span{width:15px;height:15px;border-radius:4px;display:grid;place-items:center;font-size:9px;font-weight:700;color:#0c0d11}
+.dots .W{background:var(--win)} .dots .L{background:var(--loss)} .dots .E{background:rgba(255,255,255,.08)}
+.ranks{display:flex;gap:10px;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.06em;white-space:nowrap}
+.ranks b{font-family:"Barlow Condensed",Barlow,sans-serif;font-size:15px;color:var(--text);letter-spacing:0}
+
+.barLayout{display:flex;align-items:center;gap:16px;height:44px;padding:0 18px 0 8px;border-radius:12px;background:var(--bg);border:1px solid var(--line);width:max-content;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.barLayout .ring{width:34px;height:34px}
+.barLayout .ring .lv{font-size:16px}
+.barLayout .ring .lvcap{display:none}
+.barLayout .seg{display:flex;align-items:center;gap:7px}
+.barLayout .vsep{width:1px;height:22px;background:var(--line)}
+.barLayout .elo{font-size:28px}
+.barLayout .delta{font-size:15px;padding:1px 6px}
+.barLayout .wl{font-size:24px}
+.barLayout .kv{font-size:12px;font-weight:600;color:var(--muted)} .barLayout .kv b{font-family:"Barlow Condensed",Barlow,sans-serif;font-size:17px;color:var(--text);margin-left:3px}
+
+.flash-up{animation:fu 1.4s ease}.flash-down{animation:fd 1.4s ease}
+@keyframes fu{20%{box-shadow:0 0 0 3px rgba(34,211,122,.55)}}
+@keyframes fd{20%{box-shadow:0 0 0 3px rgba(255,77,94,.55)}}
+.msg{display:inline-block;padding:10px 14px;border-radius:10px;background:var(--bg);border:1px solid var(--line);font-size:13px;color:var(--muted);max-width:460px}
+.msg b{color:var(--text)}
+.fadein{animation:fi .5s ease both}@keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(() => {
+  const P = new URLSearchParams(location.search);
+  const CFG = window.ELO_CONFIG || {};
+  const NICK = (P.get('nickname') || CFG.nickname || '').trim();
+  const KEY0 = (P.get('key') || CFG.key || '').trim();
+  const KEY = /PASTE/i.test(KEY0) ? '' : KEY0;
+  const DEMO = P.get('demo') === '1';
+  const LAYOUT = P.get('layout') === 'bar' ? 'bar' : 'card';
+  const REFRESH = Math.max(20, +P.get('refresh') || 60) * 1000;
+  const accent = (P.get('accent') || '').replace(/[^0-9a-fA-F]/g, '');
+  if (accent.length === 6 || accent.length === 3) document.documentElement.style.setProperty('--accent', '#' + accent);
+
+  // Official FACEIT CS2 level brackets (support.faceit.com)
+  const LEVELS = [[1,100,500],[2,501,750],[3,751,900],[4,901,1050],[5,1051,1200],[6,1201,1350],[7,1351,1530],[8,1531,1750],[9,1751,2000],[10,2001,Infinity]];
+  const LVL_COLOR = l => l === 1 ? '#e8e8e8' : l <= 3 ? '#38e05a' : l <= 7 ? '#ffc800' : l <= 9 ? '#ff7a1a' : '#ff3b2f';
+  const levelFor = elo => LEVELS.find(([, lo, hi]) => elo >= lo && elo <= hi) || LEVELS[0];
+
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+  };
+  const today = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate(); };
+  const SKEY = 'elo-session:' + NICK.toLowerCase();
+  const GKEY = 'elo-games:' + NICK.toLowerCase();   // per-match ELO changes seen by this overlay
+
+  const root = document.getElementById('root');
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const showMsg = html => { root.innerHTML = '<div class="msg fadein">' + html + '</div>'; };
+  const sgn = n => (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n);
+  const cls = n => n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
+  const f1 = (v, d = 1) => v == null || isNaN(v) ? '–' : (+v).toFixed(d);
+
+  let last = null;
+
+  function render(d) {
+    const [lvl, lo, hi] = levelFor(d.elo);
+    document.documentElement.style.setProperty('--lvl', LVL_COLOR(lvl));
+    const pct = hi === Infinity ? 100 : Math.max(0, Math.min(100, (d.elo - lo) / (hi - lo + 1) * 100));
+    const toNext = hi === Infinity ? null : hi + 1 - d.elo;
+    const delta = d.elo - d.startElo;
+    const C = 2 * Math.PI * 27;
+    const dots = Array.from({length: 10}, (_, i) => d.recent[i] || 'E').map(r => `<span class="${r}">${r === 'E' ? '' : r}</span>`).join('');
+    const ring = `<div class="ring"><svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="27" fill="none" stroke-width="6"/>
+      <circle class="prog" cx="32" cy="32" r="27" fill="none" stroke-width="6" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct/100)}"/></svg>
+      <div class="lv num">${lvl}<span class="lvcap">LVL</span></div></div>`;
+    const nextTxt = toNext == null ? `<b>MAX LEVEL</b> · <b class="num">${d.elo - 2000}</b> above level 10` : `<b class="num">${toNext}</b> to level ${lvl + 1}`;
+    const ranks = [d.regionRank ? `${esc(d.region)} <b>#${d.regionRank.toLocaleString()}</b>` : '', d.countryRank ? `${esc(d.country.toUpperCase())} <b>#${d.countryRank.toLocaleString()}</b>` : ''].filter(Boolean).join('');
+    const lastG = d.lastDelta != null ? `<div class="lastg">LAST <b class="${cls(d.lastDelta)}">${sgn(d.lastDelta)}</b></div>` : '';
+
+    if (LAYOUT === 'bar') {
+      root.innerHTML = `<div class="barLayout fadein" id="box">${ring}
+        <div class="seg"><span class="elo num" id="eloNum">${d.elo}</span><span class="delta num ${cls(delta)}">${sgn(delta)}</span></div>
+        <div class="vsep"></div><div class="seg"><span class="wl num"><span class="w">${d.w}</span><span class="sep">–</span><span class="l">${d.l}</span></span></div>
+        <div class="vsep"></div><div class="dots">${dots}</div>
+        <div class="vsep"></div><span class="kv">K/D<b>${f1(d.kd, 2)}</b></span><span class="kv">AVG<b>${f1(d.avg)}</b></span><span class="kv">HS<b>${f1(d.hs, 0)}%</b></span>
+        ${ranks ? '<div class="vsep"></div><div class="ranks">' + ranks + '</div>' : ''}</div>`;
+    } else {
+      root.innerHTML = `<div class="card fadein" id="box">
+        <div class="top">${ring}
+          <div class="mid"><div class="name">${esc(d.nickname)}</div>
+            <div class="eloRow"><span class="elo num" id="eloNum">${d.elo}<small>ELO</small></span><span class="delta num ${cls(delta)}">${sgn(delta)}</span></div>
+            <div class="bar"><i style="width:${pct}%"></i></div><div class="next">${nextTxt}</div></div>
+          <div class="right"><div class="cap">Today</div>
+            <div class="wl num"><span class="w">${d.w}</span><span class="sep">–</span><span class="l">${d.l}</span></div>${lastG}</div>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="cap">K/D</div><div class="v num">${f1(d.kd, 2)}</div></div>
+          <div class="stat"><div class="cap">Avg kills</div><div class="v num">${f1(d.avg)}</div></div>
+          <div class="stat"><div class="cap">HS %</div><div class="v num">${f1(d.hs, 0)}</div></div>
+          <div class="stat"><div class="cap">ADR</div><div class="v num">${f1(d.adr)}</div></div>
+        </div>
+        <div class="foot"><div class="dots">${dots}</div><div class="ranks">${ranks}</div></div></div>`;
+    }
+    if (last && last.elo !== d.elo) {
+      document.getElementById('box').classList.add(d.elo > last.elo ? 'flash-up' : 'flash-down');
+      countUp(document.getElementById('eloNum'), last.elo, d.elo);
+    }
+    last = d;
+  }
+
+  function countUp(el, from, to) {
+    const small = el.querySelector('small'); const tail = small ? small.outerHTML : '';
+    const t0 = performance.now(), dur = 1100;
+    const step = now => { const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.innerHTML = Math.round(from + (to - from) * e) + tail; if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+
+  // ---------- FACEIT Data API v4 ----------
+  const API = 'https://open.faceit.com/data/v4';
+  const get = async path => {
+    const r = await fetch(API + path, { headers: { Authorization: 'Bearer ' + KEY, Accept: 'application/json' } });
+    if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? 'API key was rejected (use a client-side key)' : r.status === 404 ? 'Player not found' : 'FACEIT API error ' + r.status);
+    return r.json();
+  };
+  const statsCache = {};
+  let ranksAt = 0, ranksVal = {};
+
+  async function fetchData() {
+    const p = await get('/players?nickname=' + encodeURIComponent(NICK) + '&game=cs2');
+    const pid = p.player_id;
+    const g = (p.games && p.games.cs2) || {};
+    const elo = g.faceit_elo;
+    if (!elo) throw new Error('No CS2 ELO on this account');
+    const region = g.region || 'EU', country = p.country || '';
+
+    let s = store.get(SKEY);
+    if (P.get('reset') === '1' || !s || s.day !== today()) {
+      s = { day: today(), startElo: elo, since: Math.floor(Date.now() / 1000) };
+      store.set(SKEY, s);
+    }
+
+    // last 20 matches: results + averaged stats
+    const h = await get(`/players/${pid}/history?game=cs2&offset=0&limit=20`);
+    const items = (h.items || []).filter(m => m.results);
+    let w = 0, l = 0; const recent = [];
+    let K = 0, D = 0, HS = 0, ADR = 0, n = 0, nAdr = 0;
+    for (const m of items) {
+      const fac = Object.entries(m.teams || {}).find(([, t]) => (t.players || []).some(pl => pl.player_id === pid));
+      if (!fac) continue;
+      const won = m.results.winner === fac[0];
+      if (recent.length < 10) recent.push(won ? 'W' : 'L');
+      if ((m.finished_at || 0) >= s.since - 60) won ? w++ : l++;
+      let st = statsCache[m.match_id];
+      if (!st) {
+        try {
+          const ms = await get('/matches/' + m.match_id + '/stats');
+          for (const r of ms.rounds || []) for (const t of r.teams || []) for (const pl of t.players || [])
+            if (pl.player_id === pid) { const x = pl.player_stats; st = { k: +x.Kills || 0, d: +x.Deaths || 0, hs: +x['Headshots %'] || 0, adr: x.ADR != null ? +x.ADR : null }; }
+          if (st) statsCache[m.match_id] = st;
+        } catch {}
+      }
+      if (st) { K += st.k; D += st.d; HS += st.hs; n++; if (st.adr != null) { ADR += st.adr; nAdr++; } }
+    }
+
+    // per-match ELO change: recorded when a new finished match shows up while the overlay is running
+    const games = store.get(GKEY) || { lastElo: elo, lastMatch: items[0] && items[0].match_id, deltas: {} };
+    if (items[0] && items[0].match_id !== games.lastMatch && elo !== games.lastElo) {
+      games.deltas[items[0].match_id] = elo - games.lastElo;
+    }
+    games.lastElo = elo; games.lastMatch = items[0] && items[0].match_id; store.set(GKEY, games);
+    const lastDelta = items[0] ? games.deltas[items[0].match_id] : undefined;
+
+    // rankings (refreshed every 10 min)
+    if (Date.now() - ranksAt > 600000) {
+      ranksAt = Date.now();
+      try { ranksVal.region = (await get(`/rankings/games/cs2/regions/${region}/players/${pid}?limit=1`)).position; } catch {}
+      if (country) try { ranksVal.country = (await get(`/rankings/games/cs2/regions/${region}/players/${pid}?country=${country}&limit=1`)).position; } catch {}
+    }
+
+    return { nickname: p.nickname || NICK, elo, startElo: s.startElo, w, l, recent,
+      kd: n ? K / Math.max(1, D) : null, avg: n ? K / n : null, hs: n ? HS / n : null, adr: nAdr ? ADR / nAdr : null,
+      region, country, regionRank: ranksVal.region, countryRank: ranksVal.country, lastDelta };
+  }
+
+  async function tick() {
+    try { render(await fetchData()); }
+    catch (e) { if (!last) showMsg('<b>ELO overlay:</b> ' + esc(e.message)); }
+  }
+
+  if (DEMO) {
+    const d = { nickname: NICK || 'chrisstiancs', elo: 2412, startElo: 2412, w: 0, l: 0, recent: ['L','W','L','W','W','L','W','L','W','L'],
+      kd: 0.96, avg: 13.9, hs: 62, adr: 78.9, region: 'NA', country: 'us', regionRank: 2140, countryRank: 1149, lastDelta: -30 };
+    render(d);
+    setTimeout(() => render({ ...d, elo: 2432, w: 1, recent: ['W', ...d.recent.slice(0, 9)], regionRank: 2086, countryRank: 1118, lastDelta: 20 }), 4000);
+    return;
+  }
+  if (!NICK || !KEY) { showMsg('<b>ELO overlay:</b> add <b>?nickname=YOURNAME&amp;key=YOUR_API_KEY</b> to the end of this link, or <b>?demo=1</b> to preview.'); return; }
+  tick(); setInterval(tick, REFRESH);
+})();
+</script>
+</body>
+</html>
